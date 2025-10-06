@@ -290,3 +290,29 @@ SecureCrypt represents a comprehensive solution to modern enterprise encryption 
 - **Cost-sensitive operations** seeking to reduce key management overhead
 
 The convergence of escalating breach costs, stringent regulatory requirements, and proven enterprise implementations makes SecureCrypt an essential component of modern data protection strategies. Organizations implementing this solution can expect immediate operational benefits while establishing a foundation for long-term security resilience and regulatory compliance.
+
+# How to run this code:
+
+1. Open pyhton terminal
+2. Paste this command 
+```
+python3 -m streamlit run "FILE_PATH/SecureCrypt.py"
+```
+**Note:** Replace FILE_PATH with actual file path and hit enter to run the code.
+
+
+# 📸 Screenshots of UI screen
+
+![1](images/1.png)  
+
+![2](images/2.png) 
+
+![3](images/3.png)  
+
+![4](images/4.png)  
+
+![5](images/5.png)  
+
+![6](images/6.png)  
+
+![7](images/7.png)  
