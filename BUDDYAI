@@ -206,29 +206,47 @@ public class PdfTextChunk
 Example using HttpClient and imaginary API endpoints:
 
 ```csharp
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 
 public class EmbeddingService
 {
     private readonly HttpClient _httpClient;
-    private readonly string HuggingFaceToken = "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"; // Store securely in config
-    private readonly string HuggingFaceEmbeddingUrl = "https://api-inference.huggingface.co/embeddings/sentence-transformers/all-mpnet-base-v2";
-    private readonly string Llama3ChatUrl = "https://router.huggingface.co/v1/chat/completions";
+    private readonly string HuggingFaceToken;
 
-    public EmbeddingService(HttpClient httpClient)
+    private readonly string EmbeddingEndpoint = "https://api-inference.huggingface.co/models/sentence-transformers/all-mpnet-base-v2";
+    private readonly string ChatCompletionEndpoint = "https://router.huggingface.co/v1/chat/completions";
+
+    public EmbeddingService(HttpClient httpClient, string huggingFaceToken)
     {
         _httpClient = httpClient;
-        _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", HuggingFaceToken);
+        HuggingFaceToken = huggingFaceToken;
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", HuggingFaceToken);
     }
 
+    // Extract embedding for given text (same as python embed_text)
     public async Task<float[]> GetEmbeddingAsync(string text)
     {
-        var response = await _httpClient.PostAsJsonAsync(HuggingFaceEmbeddingUrl, new { inputs = text });
+        var requestPayload = new { inputs = text };
+
+        var response = await _httpClient.PostAsJsonAsync(EmbeddingEndpoint, requestPayload);
         response.EnsureSuccessStatusCode();
+
         var json = await response.Content.ReadAsStringAsync();
-        var doc = JsonDocument.Parse(json);
-        var embedding = doc.RootElement.GetProperty("embedding").EnumerateArray().Select(x => x.GetSingle()).ToArray();
+        using var doc = JsonDocument.Parse(json);
+
+        // Expecting response is an array of floats (embedding vector)
+        var embeddingElement = doc.RootElement;
+
+        // HuggingFace embedding outputs just array of floats
+        int length = embeddingElement.GetArrayLength();
+        float[] embedding = new float[length];
+        for (int i = 0; i < length; i++)
+        {
+            embedding[i] = embeddingElement[i].GetSingle();
+        }
+
         return embedding;
     }
 
@@ -246,9 +264,10 @@ public class EmbeddingService
         return dot / ((float)Math.Sqrt(normA) * (float)Math.Sqrt(normB));
     }
 
-    public List<PdfTextChunk> FindSimilarChunks(string query, List<PdfTextChunk> chunks, int topK = 4)
+    // Find top K chunks matching query based on cosine similarity
+    public async Task<List<PdfTextChunk>> FindSimilarChunksAsync(string query, List<PdfTextChunk> chunks, int topK = 4)
     {
-        var queryEmbedding = GetEmbeddingAsync(query).Result;
+        var queryEmbedding = await GetEmbeddingAsync(query);
         var similarities = chunks.Select(c => new { Chunk = c, Score = CosineSimilarity(queryEmbedding, c.Embedding) })
                                  .OrderByDescending(x => x.Score)
                                  .Take(topK)
@@ -257,29 +276,39 @@ public class EmbeddingService
         return similarities;
     }
 
+    // Call Llama-3 chat completions with context
     public async Task<string> AskLlama3WithContextAsync(string prompt)
     {
         var payload = new
         {
             model = "meta-llama/Llama-3.1-8B-Instruct:cerebras",
-            messages = new[] { new { role = "user", content = prompt } }
+            messages = new[]
+            {
+                new { role = "user", content = prompt }
+            }
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Post, Llama3ChatUrl)
+        using var request = new HttpRequestMessage(HttpMethod.Post, ChatCompletionEndpoint)
         {
             Content = JsonContent.Create(payload)
         };
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", HuggingFaceToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", HuggingFaceToken);
 
-        var resp = await _httpClient.SendAsync(request);
-        resp.EnsureSuccessStatusCode();
+        var response = await _httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
 
-        var content = await resp.Content.ReadAsStringAsync();
-        var jsonDoc = JsonDocument.Parse(content);
-        var answer = jsonDoc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
-        return answer ?? "Sorry, no response from AI.";
+        var responseContent = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(responseContent);
+
+        var answer = doc.RootElement.GetProperty("choices")[0]
+                                   .GetProperty("message")
+                                   .GetProperty("content")
+                                   .GetString();
+
+        return answer ?? "No response from the AI model.";
     }
 }
+
 ```
 
 ***
