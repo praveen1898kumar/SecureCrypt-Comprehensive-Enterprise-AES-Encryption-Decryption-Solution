@@ -1,0 +1,419 @@
+Below is a complete ASP.NET Core Razor Pages project structure with code files implementing the AES KEK rotation vault similar to your Python Streamlit example. The project consists of encryption helpers, vault data management, Razor Pages UI for encrypt/decrypt/list/rotate, and JSON file storage.
+
+***
+
+### 1. Create a new ASP.NET Core Razor Pages Project
+
+E.g., using CLI:
+
+```bash
+dotnet new webapp -n AesKekVaultDemo
+cd AesKekVaultDemo
+```
+
+***
+
+### 2. File: `Helpers/AesEncryptionHelper.cs`
+
+```csharp
+using System;
+using System.Security.Cryptography;
+
+namespace AesKekVaultDemo.Helpers
+{
+    public static class AesEncryptionHelper
+    {
+        public static (byte[] Key, byte[] IV) GenerateKeyIV()
+        {
+            using var aes = Aes.Create();
+            aes.GenerateKey();
+            aes.GenerateIV();
+            return (aes.Key, aes.IV);
+        }
+
+        public static byte[] Encrypt(byte[] key, byte[] iv, byte[] data)
+        {
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.IV = iv;
+            aes.Mode = CipherMode.CBC;
+            aes.Padding = PaddingMode.PKCS7;
+            using var encryptor = aes.CreateEncryptor();
+            return encryptor.TransformFinalBlock(data, 0, data.Length);
+        }
+
+        public static byte[] Decrypt(byte[] key, byte[] iv, byte[] cipherData)
+        {
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.IV = iv;
+            aes.Mode = CipherMode.CBC;
+            aes.Padding = PaddingMode.PKCS7;
+            using var decryptor = aes.CreateDecryptor();
+            return decryptor.TransformFinalBlock(cipherData, 0, cipherData.Length);
+        }
+    }
+}
+```
+
+***
+
+### 3. File: `Models/VaultEntry.cs`
+
+```csharp
+namespace AesKekVaultDemo.Models
+{
+    public class VaultEntry
+    {
+        public string Id { get; set; }
+        public string WrappedDek { get; set; }
+        public string WrappingIv { get; set; }
+        public string DataCipher { get; set; }
+        public string DataIv { get; set; }
+    }
+}
+```
+
+***
+
+### 4. File: `Services/Vault.cs`
+
+```csharp
+using AesKekVaultDemo.Helpers;
+using AesKekVaultDemo.Models;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+
+namespace AesKekVaultDemo.Services
+{
+    public class Vault
+    {
+        private const string VaultFile = "vault.json";
+
+        private List<VaultEntry> entries = new List<VaultEntry>();
+        private byte[] kek;
+        private byte[] kekIv;
+
+        public List<string> LogMessages { get; } = new();
+
+        public Vault()
+        {
+            LoadVault();
+            if (kek == null || kekIv == null)
+            {
+                AddLog("No KEK found. Generating new KEK and IV...");
+                (kek, kekIv) = AesEncryptionHelper.GenerateKeyIV();
+                AddLog("KEK and IV initialized.");
+                SaveVault();
+            }
+        }
+
+        public string EncryptData(string text)
+        {
+            var (dek, dekIv) = AesEncryptionHelper.GenerateKeyIV();
+            AddLog("Generated new DEK and IV for data.");
+            var dataCipher = AesEncryptionHelper.Encrypt(dek, dekIv, Encoding.UTF8.GetBytes(text));
+            AddLog("Data encrypted with DEK.");
+            var wrappedDek = AesEncryptionHelper.Encrypt(kek, kekIv, dek);
+            AddLog("DEK encrypted (wrapped) with current KEK.");
+
+            var entry = new VaultEntry
+            {
+                Id = Guid.NewGuid().ToString(),
+                WrappedDek = Convert.ToBase64String(wrappedDek),
+                WrappingIv = Convert.ToBase64String(kekIv),
+                DataCipher = Convert.ToBase64String(dataCipher),
+                DataIv = Convert.ToBase64String(dekIv)
+            };
+            entries.Add(entry);
+            SaveVault();
+            AddLog($"Encrypted entry stored with ID: {entry.Id}");
+            return entry.Id;
+        }
+
+        public string DecryptData(string entryId)
+        {
+            var entry = entries.FirstOrDefault(e => e.Id == entryId);
+            if (entry == null)
+            {
+                AddLog($"Entry ID not found: {entryId}");
+                return "Entry not found";
+            }
+            var wrappedDek = Convert.FromBase64String(entry.WrappedDek);
+            var wrappingIv = Convert.FromBase64String(entry.WrappingIv);
+            var dek = AesEncryptionHelper.Decrypt(kek, wrappingIv, wrappedDek);
+            AddLog("Unwrapped DEK using current KEK.");
+
+            var dataCipher = Convert.FromBase64String(entry.DataCipher);
+            var dataIv = Convert.FromBase64String(entry.DataIv);
+            try
+            {
+                var plaintextBytes = AesEncryptionHelper.Decrypt(dek, dataIv, dataCipher);
+                AddLog("Data decrypted with unwrapped DEK.");
+                return Encoding.UTF8.GetString(plaintextBytes);
+            }
+            catch
+            {
+                AddLog("Decryption failed. Likely wrong KEK/IV.");
+                return "Decryption failed (wrong KEK?)";
+            }
+        }
+
+        public void RotateKEK()
+        {
+            var oldKek = kek;
+            var oldIv = kekIv;
+            (kek, kekIv) = AesEncryptionHelper.GenerateKeyIV();
+            AddLog("Generated new KEK and IV for rotation.");
+
+            foreach (var entry in entries)
+            {
+                var wrappedDek = Convert.FromBase64String(entry.WrappedDek);
+                var wrappingIv = Convert.FromBase64String(entry.WrappingIv);
+                var dek = AesEncryptionHelper.Decrypt(oldKek, wrappingIv, wrappedDek);
+                AddLog($"Unwrapped DEK for entry {entry.Id}.");
+                var newWrappedDek = AesEncryptionHelper.Encrypt(kek, kekIv, dek);
+                entry.WrappedDek = Convert.ToBase64String(newWrappedDek);
+                entry.WrappingIv = Convert.ToBase64String(kekIv);
+                AddLog($"Rewrapped DEK for entry {entry.Id} with new KEK.");
+            }
+
+            SaveVault();
+            AddLog("Rotated KEK and updated all entries.");
+        }
+
+        public List<string> ListEntryIds()
+        {
+            return entries.Select(e => e.Id).ToList();
+        }
+
+        private void SaveVault()
+        {
+            var vaultData = new
+            {
+                Kek = Convert.ToBase64String(kek),
+                KekIv = Convert.ToBase64String(kekIv),
+                Entries = entries
+            };
+            var json = JsonSerializer.Serialize(vaultData, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(VaultFile, json);
+            AddLog("Vault saved to file.");
+        }
+
+        private void LoadVault()
+        {
+            if (!File.Exists(VaultFile))
+            {
+                kek = null;
+                kekIv = null;
+                entries = new List<VaultEntry>();
+                AddLog("No vault file found, initializing new vault.");
+                return;
+            }
+
+            var json = File.ReadAllText(VaultFile);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            kek = Convert.FromBase64String(root.GetProperty("Kek").GetString());
+            kekIv = Convert.FromBase64String(root.GetProperty("KekIv").GetString());
+            entries = root.GetProperty("Entries").EnumerateArray()
+                .Select(e => new VaultEntry
+                {
+                    Id = e.GetProperty("Id").GetString(),
+                    WrappedDek = e.GetProperty("WrappedDek").GetString(),
+                    WrappingIv = e.GetProperty("WrappingIv").GetString(),
+                    DataCipher = e.GetProperty("DataCipher").GetString(),
+                    DataIv = e.GetProperty("DataIv").GetString()
+                }).ToList();
+
+            AddLog($"Vault loaded. {entries.Count} entries found.");
+        }
+
+        private void AddLog(string message)
+        {
+            LogMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+            if (LogMessages.Count > 100)
+            {
+                LogMessages.RemoveAt(0);
+            }
+        }
+    }
+}
+```
+
+***
+
+### 5. File: `Pages/Index.cshtml.cs`
+
+```csharp
+using AesKekVaultDemo.Services;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Collections.Generic;
+
+namespace AesKekVaultDemo.Pages
+{
+    public class IndexModel : PageModel
+    {
+        private static Vault vaultInstance = new();
+
+        [BindProperty]
+        public string InputText { get; set; }
+
+        [BindProperty]
+        public string SelectedEntryId { get; set; }
+
+        public List<string> EntryIds { get; set; } = new();
+
+        public string ResultMessage { get; set; }
+
+        public List<string> Logs => vaultInstance.LogMessages;
+
+        public void OnGet()
+        {
+            EntryIds = vaultInstance.ListEntryIds();
+        }
+
+        public IActionResult OnPostEncrypt()
+        {
+            if (string.IsNullOrEmpty(InputText))
+            {
+                ResultMessage = "Please enter text to encrypt.";
+            }
+            else
+            {
+                var id = vaultInstance.EncryptData(InputText);
+                ResultMessage = $"Data encrypted. Entry ID: {id}";
+            }
+            EntryIds = vaultInstance.ListEntryIds();
+            return Page();
+        }
+
+        public IActionResult OnPostDecrypt()
+        {
+            if (string.IsNullOrEmpty(SelectedEntryId))
+            {
+                ResultMessage = "Please select an entry to decrypt.";
+            }
+            else
+            {
+                ResultMessage = vaultInstance.DecryptData(SelectedEntryId);
+            }
+            EntryIds = vaultInstance.ListEntryIds();
+            return Page();
+        }
+
+        public IActionResult OnPostRotate()
+        {
+            vaultInstance.RotateKEK();
+            ResultMessage = "KEK rotated and all entries updated.";
+            EntryIds = vaultInstance.ListEntryIds();
+            return Page();
+        }
+    }
+}
+```
+
+***
+
+### 6. File: `Pages/Index.cshtml`
+
+```html
+@page
+@model AesKekVaultDemo.Pages.IndexModel
+@{
+    ViewData["Title"] = "AES KEK Rotation Vault Demo";
+}
+
+<h1>🔐 AES KEK Rotation Vault Demo</h1>
+
+<div style="display: flex; gap: 2rem;">
+
+    <div style="flex: 2;">
+        <h3>Encrypt Data</h3>
+        <form method="post" asp-page-handler="Encrypt">
+            <textarea asp-for="InputText" rows="6" style="width:100%"></textarea><br />
+            <button type="submit">Encrypt</button>
+        </form>
+
+        <hr />
+
+        <h3>Decrypt Data</h3>
+        <form method="post" asp-page-handler="Decrypt">
+            <select asp-for="SelectedEntryId" style="width: 100%;">
+                <option value="">-- Select Entry ID --</option>
+                @foreach (var id in Model.EntryIds)
+                {
+                    <option value="@id">@id</option>
+                }
+            </select><br />
+            <button type="submit" style="margin-top: 0.5rem;">Decrypt</button>
+        </form>
+
+        <hr />
+
+        <h3>List Vault Entries</h3>
+        @if (Model.EntryIds.Count == 0)
+        {
+            <p>No entries.</p>
+        }
+        else
+        {
+            <ul>
+                @foreach (var id in Model.EntryIds)
+                {
+                    <li>@id</li>
+                }
+            </ul>
+        }
+
+        <hr />
+
+        <h3>Rotate KEK</h3>
+        <form method="post" asp-page-handler="Rotate">
+            <button type="submit">Rotate KEK</button>
+        </form>
+
+        <hr />
+
+        @if (!string.IsNullOrEmpty(Model.ResultMessage))
+        {
+            <div style="background-color: #e0e7ff; padding: 1rem; margin-top: 1rem; border-radius: 4px;">
+                <strong>Result:</strong> @Model.ResultMessage
+            </div>
+        }
+    </div>
+
+    <div style="flex: 1; background: #222; color: #eee; padding: 1rem; border-radius: 4px; height: 420px; overflow-y: auto; font-family: monospace; font-size: 13px;">
+        <h4>📝 What's Happening</h4>
+        <button onclick="location.reload();">Refresh Logs</button>
+        <div style="margin-top: 0.5rem;">
+            @foreach (var log in Model.Logs)
+            {
+                <div>@log</div>
+            }
+        </div>
+    </div>
+</div>
+```
+
+***
+
+### Instructions to run:
+
+- Add the folders `Helpers`, `Models`, `Services` to your project.
+- Add the above files in respective folders.
+- Replace `Index.cshtml` and `Index.cshtml.cs` under `Pages` folder with the above code.
+- Run the project using `dotnet run` or from Visual Studio.
+- Use the UI to encrypt, list, decrypt, and rotate KEK.
+
+***
+
+This full ASP.NET Core Razor Pages app replicates the functionalities of your Python Streamlit AES KEK rotation vault demo with logs and vault file saved in JSON format.
+
+If more features or a detailed API version is needed, that can be provided too.
