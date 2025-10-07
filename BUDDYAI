@@ -1,0 +1,432 @@
+To convert your Python Streamlit AI chatbot for PDF onboarding document understanding into a full ASP.NET MVC application with a more attractive UI, the main tasks will be:
+
+1. PDF Text Extraction in .NET MVC (using a PDF library like Syncfusion, iText7, or PdfSharp).
+2. Text chunking and embedding generation using a huggingface-compatible library or REST API call.
+3. Compute cosine similarities and find relevant chunks.
+4. Calling the Llama 3.1 API or similar chat AI from .NET backend.
+5. Implementing a conversational UI in ASP.NET MVC with a modern attractive look (e.g., with Bootstrap or Telerik UI components).
+
+***
+
+### Here is a suggested project structure and main files to create:
+
+#### 1. **Project Setup**
+- Create an ASP.NET MVC Web Application (.NET 6 or .NET 7 recommended)
+- Add required NuGet packages for PDF processing and HTTP client (e.g., Syncfusion.Pdf.Net.Core or iText7, Microsoft.Extensions.Http, Newtonsoft.Json)
+
+***
+
+#### 2. **File: Models/ChatMessage.cs**
+
+```csharp
+public class ChatMessage
+{
+    public string Role { get; set; }  // "user" or "assistant"
+    public string Content { get; set; }
+}
+```
+
+***
+
+#### 3. **File: Services/PdfService.cs**
+
+Implement PDF text extraction logic here, using Syncfusion PDF library (or any other):
+
+```csharp
+using Syncfusion.Pdf.Parsing;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+
+public class PdfService
+{
+    public async Task<string> ExtractTextFromPdfAsync(string filePath)
+    {
+        using FileStream stream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+        PdfLoadedDocument loadedDocument = new PdfLoadedDocument(stream);
+        StringBuilder fullText = new StringBuilder();
+
+        foreach (var page in loadedDocument.Pages)
+        {
+            fullText.Append(page.ExtractText());
+            fullText.AppendLine();
+        }
+
+        loadedDocument.Close(true);
+        return fullText.ToString();
+    }
+
+    public List<string> ChunkText(string text, int chunkSize = 1000)
+    {
+        List<string> chunks = new List<string>();
+        for (int i = 0; i < text.Length; i += chunkSize)
+        {
+            int length = Math.Min(chunkSize, text.Length - i);
+            string chunk = text.Substring(i, length).Trim();
+            if (!string.IsNullOrEmpty(chunk))
+                chunks.Add(chunk);
+        }
+        return chunks;
+    }
+}
+```
+
+***
+
+#### 4. **File: Services/EmbeddingService.cs**
+
+Use HTTP client to call Hugging Face embedding API (or local model if available):
+
+```csharp
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+public class EmbeddingService
+{
+    private readonly HttpClient _httpClient;
+    private readonly string _hfToken;
+
+    public EmbeddingService(HttpClient httpClient, string hfToken)
+    {
+        _httpClient = httpClient;
+        _hfToken = hfToken;
+    }
+
+    public async Task<float[]> GetEmbeddingAsync(string text)
+    {
+        var requestContent = new
+        {
+            inputs = text
+        };
+        var jsonContent = new StringContent(JsonSerializer.Serialize(requestContent), Encoding.UTF8, "application/json");
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _hfToken);
+
+        var response = await _httpClient.PostAsync("https://api-inference.huggingface.co/models/sentence-transformers/all-mpnet-base-v2", jsonContent);
+        response.EnsureSuccessStatusCode();
+
+        var responseString = await response.Content.ReadAsStringAsync();
+        var embedding = JsonSerializer.Deserialize<List<List<float>>>(responseString);
+
+        return embedding?[0].ToArray();
+    }
+
+    public double CosineSimilarity(float[] vec1, float[] vec2)
+    {
+        double dot = 0.0, normA = 0.0, normB = 0.0;
+        for (int i = 0; i < vec1.Length; i++)
+        {
+            dot += vec1[i] * vec2[i];
+            normA += vec1[i] * vec1[i];
+            normB += vec2[i] * vec2[i];
+        }
+        return dot / (Math.Sqrt(normA) * Math.Sqrt(normB));
+    }
+}
+```
+
+***
+
+#### 5. **File: Services/AiChatService.cs**
+
+Call Llama 3.1 chat completion endpoint via OpenAI-compatible API client:
+
+```csharp
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+public class AiChatService
+{
+    private readonly HttpClient _httpClient;
+    private readonly string _hfToken;
+
+    public AiChatService(HttpClient httpClient, string hfToken)
+    {
+        _httpClient = httpClient;
+        _hfToken = hfToken;
+    }
+
+    public async Task<string> AskLlama3Async(string prompt)
+    {
+        var payload = new
+        {
+            model = "meta-llama/Llama-3.1-8B-Instruct:cerebras",
+            messages = new[]
+            {
+                new { role = "user", content = prompt }
+            }
+        };
+        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _hfToken);
+
+        var response = await _httpClient.PostAsync("https://router.huggingface.co/v1/chat/completions", content);
+        response.EnsureSuccessStatusCode();
+
+        var jsonResponse = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(jsonResponse);
+        var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+
+        return message;
+    }
+}
+```
+
+***
+
+#### 6. **File: Controllers/ChatController.cs**
+
+This controller manages the chat flow:
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+public class ChatController : Controller
+{
+    private readonly PdfService _pdfService;
+    private readonly EmbeddingService _embeddingService;
+    private readonly AiChatService _aiChatService;
+
+    private static List<string> _chunks = new List<string>();
+    private static List<float[]> _embeddings = new List<float[]>();
+
+    public ChatController(PdfService pdfService, EmbeddingService embeddingService, AiChatService aiChatService)
+    {
+        _pdfService = pdfService;
+        _embeddingService = embeddingService;
+        _aiChatService = aiChatService;
+    }
+
+    public IActionResult Index()
+    {
+        return View(new List<ChatMessage>());
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> UploadPdf()
+    {
+        var file = Request.Form.Files.FirstOrDefault();
+        if (file == null || !file.FileName.EndsWith(".pdf"))
+        {
+            return BadRequest("Please upload a valid PDF file.");
+        }
+
+        var tempPath = System.IO.Path.GetTempFileName();
+        using (var stream = System.IO.File.Create(tempPath))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        var text = await _pdfService.ExtractTextFromPdfAsync(tempPath);
+        _chunks = _pdfService.ChunkText(text);
+
+        _embeddings.Clear();
+        foreach (var chunk in _chunks)
+        {
+            var emb = await _embeddingService.GetEmbeddingAsync(chunk);
+            _embeddings.Add(emb);
+        }
+
+        return RedirectToAction("Index");
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> AskQuestion(string userQuestion, List<ChatMessage> chatHistory)
+    {
+        if (_chunks.Count == 0) return Json(new { answer = "Please upload and process a PDF first." });
+
+        var queryEmbedding = await _embeddingService.GetEmbeddingAsync(userQuestion);
+
+        // Find top 4 similar chunks by cosine similarity
+        var similarities = _embeddings.Select((emb, i) => new { Index = i, Score = _embeddingService.CosineSimilarity(queryEmbedding, emb) })
+            .OrderByDescending(x => x.Score)
+            .Take(4)
+            .Select(x => _chunks[x.Index]);
+
+        string contextText = string.Join("\n", similarities);
+
+        string prompt = $"You are BuddyAI, an onboarding assistant helping new project members. Answer ONLY based on the following information:\n\n{contextText}\n\nQuestion: {userQuestion}\n\nProvide a clear, helpful, and friendly answer.";
+
+        var answer = await _aiChatService.AskLlama3Async(prompt);
+
+        chatHistory.Add(new ChatMessage { Role = "user", Content = userQuestion });
+        chatHistory.Add(new ChatMessage { Role = "assistant", Content = answer });
+
+        return PartialView("_ChatMessages", chatHistory);
+    }
+}
+```
+
+***
+
+#### 7. **File: Views/Chat/Index.cshtml**
+
+Use Bootstrap 5 for a modern, attractive UI with a chat bubble style and file upload:
+
+```html
+@model List<ChatMessage>
+
+@{
+    Layout = null;
+}
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>BuddyAI Onboarding Assistant</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.4.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+        body { background-color: #121212; color: white; }
+        .chat-container { max-width: 800px; margin: 40px auto; }
+        .chat-bubble {
+            max-width: 70%;
+            padding: 10px 20px;
+            border-radius: 25px;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            line-height: 1.4;
+        }
+        .chat-user { background: #0d6efd; color: white; margin-left: auto; }
+        .chat-assistant { background: #212529; color: #0d6efd; border: 1px solid #0d6efd; }
+        .loader {
+            border: 6px solid #212529;
+            border-top: 6px solid #0d6efd;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container bg-dark p-4 rounded shadow-lg">
+        <h1 class="mb-4 text-center">🤖 BuddyAI - Your Friendly Onboarding Companion</h1>
+
+        <form asp-action="UploadPdf" method="post" enctype="multipart/form-data" class="mb-4">
+            <div class="mb-3">
+                <label for="pdfFile" class="form-label">Upload Onboarding PDF:</label>
+                <input type="file" class="form-control" id="pdfFile" name="pdfFile" accept=".pdf" required />
+            </div>
+            <button type="submit" class="btn btn-primary w-100">Process PDF</button>
+        </form>
+
+        <div id="chatMessages" style="height: 400px; overflow-y: auto; border: 1px solid #0d6efd; border-radius: 10px; padding: 20px; background: #212529;">
+            @foreach (var message in Model)
+            {
+                if (message.Role == "user")
+                {
+                    <div class="chat-bubble chat-user text-end">@message.Content</div>
+                }
+                else
+                {
+                    <div class="chat-bubble chat-assistant text-start">@message.Content</div>
+                }
+            }
+        </div>
+
+        <form id="chatForm" method="post" style="margin-top: 20px;">
+            <div class="input-group">
+                <input type="text" name="userQuestion" class="form-control" placeholder="Ask me anything about the onboarding document..." autocomplete="off" required />
+                <button type="submit" class="btn btn-primary">Send</button>
+            </div>
+        </form>
+
+        <div id="loader" class="loader" style="display:none;"></div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        $(function () {
+            var chatHistory = @Html.Raw(Newtonsoft.Json.JsonConvert.SerializeObject(Model));
+            
+            $('#chatForm').submit(function (e) {
+                e.preventDefault();
+                var userQuestion = $(this).find('input[name="userQuestion"]').val();
+                if (userQuestion.trim() === '') return;
+                $('#loader').show();
+
+                $.ajax({
+                    type: "POST",
+                    url: '@Url.Action("AskQuestion", "Chat")',
+                    data: {
+                        userQuestion: userQuestion,
+                        chatHistory: chatHistory
+                    },
+                    success: function (result) {
+                        $('#chatMessages').html(result);
+                        chatHistory = $(result).map(function () {
+                            return { Role: $(this).data('role'), Content: $(this).text() };
+                        }).get();
+                        $('#chatForm').find('input[name="userQuestion"]').val('');
+                        $('#loader').hide();
+                        $('#chatMessages').scrollTop($('#chatMessages')[0].scrollHeight);
+                    },
+                    error: function () {
+                        alert('Error sending question. Make sure you processed the PDF first.');
+                        $('#loader').hide();
+                    }
+                });
+            });
+
+        });
+    </script>
+</body>
+</html>
+```
+
+***
+
+#### 8. **File: Views/Chat/_ChatMessages.cshtml**
+
+Partial view to update chat messages dynamically:
+
+```csharp
+@model List<ChatMessage>
+
+@foreach (var message in Model)
+{
+    if (message.Role == "user")
+    {
+        <div class="chat-bubble chat-user text-end">@message.Content</div>
+    }
+    else
+    {
+        <div class="chat-bubble chat-assistant text-start">@message.Content</div>
+    }
+}
+```
+
+***
+
+### Summary of Steps to Run:
+
+- Setup your MVC project with required packages.
+- Register HttpClient and services in `Startup.cs` or `Program.cs`:
+
+```csharp
+services.AddHttpClient<EmbeddingService>();
+services.AddHttpClient<AiChatService>();
+services.AddSingleton<PdfService>();
+services.AddTransient<EmbeddingService>();
+services.AddTransient<AiChatService>();
+```
+
+- Inject your Hugging Face token via appsettings or Environment variable.
+- Upload PDF, process into chunks and embeddings.
+- Use chat interface to query, find relevant chunks, call Llama 3.1 model, and display answers.
+- The UI uses Bootstrap for responsiveness and styling, improving attractiveness compared to Streamlit default UI.
+
+***
