@@ -417,3 +417,109 @@ namespace AesKekVaultDemo.Pages
 This full ASP.NET Core Razor Pages app replicates the functionalities of your Python Streamlit AES KEK rotation vault demo with logs and vault file saved in JSON format.
 
 If more features or a detailed API version is needed, that can be provided too.
+
+
+
+@page
+@model AesKekVaultDemo.Pages.IndexModel
+@{
+    ViewData["Title"] = "AES KEK Rotation Vault Demo";
+}
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+<div class="container my-5">
+    <h1 class="mb-4 text-primary text-center">🔐 AES KEK Rotation Vault Demo</h1>
+
+    @if (!string.IsNullOrEmpty(Model.ResultMessage))
+    {
+        <div class="alert alert-info text-center" role="alert">
+            <strong>Result:</strong> @Model.ResultMessage
+        </div>
+    }
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h4>Encrypt Data</h4>
+                </div>
+                <div class="card-body">
+                    <form method="post" asp-page-handler="Encrypt">
+                        <textarea asp-for="InputText" class="form-control" rows="5" placeholder="Enter data to encrypt"></textarea><br />
+                        <button type="submit" class="btn btn-success w-100">Encrypt</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-4">
+                <div class="card-header bg-primary text-white">
+                    <h4>Decrypt Data</h4>
+                </div>
+                <div class="card-body">
+                    <form method="post" asp-page-handler="Decrypt">
+                        <select asp-for="SelectedEntryId" class="form-select mb-2" aria-label="Select entry to decrypt">
+                            <option value="">-- Select Entry ID --</option>
+                            @foreach (var id in Model.EntryIds)
+                            {
+                                <option value="@id">@id</option>
+                            }
+                        </select>
+                        <button type="submit" class="btn btn-warning w-100">Decrypt</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-4">
+                <div class="card-header bg-primary text-white">
+                    <h4>List Vault Entries</h4>
+                </div>
+                <div class="card-body">
+                    @if (Model.EntryIds.Count == 0)
+                    {
+                        <div class="text-muted">No entries.</div>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var id in Model.EntryIds)
+                            {
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <code>@id</code>
+                                    <span class="badge bg-primary rounded-pill">ID</span>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-4">
+                <div class="card-header bg-primary text-white">
+                    <h4>Rotate KEK</h4>
+                </div>
+                <div class="card-body text-center">
+                    <form method="post" asp-page-handler="Rotate">
+                        <button type="submit" class="btn btn-danger w-50">Rotate KEK</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card shadow-sm" style="height: 550px; overflow-y: auto;">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">📝 What's Happening</h5>
+                    <button class="btn btn-sm btn-outline-light" onclick="location.reload();" title="Refresh Logs">Refresh</button>
+                </div>
+                <div class="card-body" style="font-family: monospace; font-size: 0.875rem; white-space: pre-line;">
+                    @foreach (var log in Model.Logs)
+                    {
+                        <div>@log</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
