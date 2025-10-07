@@ -1,3 +1,81 @@
+To create the ASP.NET Core project for the BuddyAI onboarding chatbot, follow these steps:
+
+***
+
+### Step 1: Install Prerequisites
+
+- Install [.NET SDK (7.0 or later)](https://dotnet.microsoft.com/en-us/download)
+- Install a code editor like [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) or [Visual Studio Code](https://code.visualstudio.com/)
+
+***
+
+### Step 2: Create a New ASP.NET Core Web App
+
+Open a terminal or command prompt and run:
+
+```bash
+dotnet new webapp -n BuddyAIOnboardingAspNetCore
+cd BuddyAIOnboardingAspNetCore
+```
+
+This creates a new Razor Pages web application inside a folder named **BuddyAIOnboardingAspNetCore**.
+
+***
+
+### Step 3: Add Required NuGet Packages
+
+For PDF reading and HTTP calls, install:
+
+```bash
+dotnet add package UglyToad.PdfPig        # For PDF text extraction
+dotnet add package Microsoft.Extensions.Http
+```
+
+If you want to use other PDF libraries like iText7, similarly add them.
+
+***
+
+### Step 4: Open the Project in Your Editor
+
+- In Visual Studio: Open the project folder.
+- In VS Code: Run `code .` inside the project folder.
+
+***
+
+### Step 5: Add Your Code Files and Folders
+
+Manually create the folders and files as per the structure explained earlier:
+
+- Create `Models`, `Controllers`, `Pages`, `wwwroot/css`, `wwwroot/js` folders.
+- Add the files (`Program.cs`, `ChatbotController.cs`, `EmbeddingService.cs`, `ChatMessage.cs`, `PdfTextChunk.cs`, `Index.cshtml`, `Index.cshtml.cs`, `site.css`, `chat.js`) with the content as shared.
+
+***
+
+### Step 6: Configure Program.cs
+
+Replace the existing `Program.cs` content with the example code provided earlier to configure services and request pipeline.
+
+***
+
+### Step 7: Run the application
+
+To run the project, in terminal inside project folder:
+
+```bash
+dotnet run
+```
+
+Open your browser to the URL it shows, typically `https://localhost:5001`.
+
+***
+
+If you prefer, I can guide step-by-step with detailed commands and code snippets for each file creation after project setup. Would that be helpful?
+
+
+
+----------------------------
+
+
 To convert the provided Python Streamlit AI onboarding chatbot into an ASP.NET Core web application with an attractive UI, the approach is to:
 
 1. Create an ASP.NET Core web project with Razor Pages or MVC (favoring Razor Pages for simplicity).
