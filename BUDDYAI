@@ -461,48 +461,77 @@ public class IndexModel : PageModel
 AJAX for external call and UI interaction:
 
 ```js
-$(function () {
-    const chatMessages = $("#chatMessages");
-    const chatWindow = $("#chatWindow");
+document.addEventListener("DOMContentLoaded", function () {
+    const chatMessages = document.getElementById("chatMessages");
+    const chatWindow = document.getElementById("chatWindow");
+    const sendMessageBtn = document.getElementById("sendMessageBtn");
+    const userInput = document.getElementById("userInput");
 
     function appendMessage(role, message) {
-        let bg = role === "user" ? "bg-primary text-white" : "bg-light text-dark";
-        let align = role === "user" ? "text-end" : "text-start";
-        chatMessages.append(`<li class="list-group-item ${bg} ${align}"><strong>${role === "user" ? "You" : "BuddyAI"}:</strong> ${message}</li>`);
-        chatWindow.scrollTop(chatWindow.prop("scrollHeight"));
+        const li = document.createElement("li");
+        li.classList.add("list-group-item");
+
+        if (role === "user") {
+            li.classList.add("bg-primary", "text-white", "text-end");
+            li.innerHTML = `<strong>You:</strong> ${message}`;
+        } else {
+            li.classList.add("bg-light", "text-dark", "text-start");
+            li.innerHTML = `<strong>BuddyAI:</strong> ${message}`;
+        }
+
+        chatMessages.appendChild(li);
+        chatWindow.scrollTop = chatWindow.scrollHeight;
     }
 
-    $("#sendMessageBtn").click(async function () {
-        const userInput = $("#userInput");
-        const message = userInput.val().trim();
+    sendMessageBtn.addEventListener("click", async function () {
+        const message = userInput.value.trim();
         if (!message) return;
 
         appendMessage("user", message);
-        userInput.val("");
+        userInput.value = "";
         appendMessage("assistant", "🤖 BuddyAI is thinking...");
 
         try {
-            let response = await fetch("/api/chatbot/ask", {
+            const response = await fetch("/api/chatbot/ask", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ content: message, role: "user" }),
             });
-            let data = await response.json();
 
-            chatMessages.children("li.bg-light:contains('🤖 BuddyAI is thinking...')").last().remove();
+            const data = await response.json();
+
+            // Remove the last "thinking" message
+            const thinkingMessages = Array.from(chatMessages.querySelectorAll("li.bg-light"));
+            for (let i = thinkingMessages.length - 1; i >= 0; i--) {
+                if (thinkingMessages[i].textContent.includes("🤖 BuddyAI is thinking...")) {
+                    chatMessages.removeChild(thinkingMessages[i]);
+                    break;
+                }
+            }
+
             appendMessage("assistant", data.content);
         } catch (err) {
-            chatMessages.children("li.bg-light:contains('🤖 BuddyAI is thinking...')").last().text("⚠️ Error getting response.");
+            // Remove last "thinking" message and show error
+            const thinkingMessages = Array.from(chatMessages.querySelectorAll("li.bg-light"));
+            for (let i = thinkingMessages.length - 1; i >= 0; i--) {
+                if (thinkingMessages[i].textContent.includes("🤖 BuddyAI is thinking...")) {
+                    chatMessages.removeChild(thinkingMessages[i]);
+                    break;
+                }
+            }
+            appendMessage("assistant", "⚠️ Error getting response.");
         }
     });
 
-    $("#userInput").keypress(function (e) {
-        if (e.which == 13) {
-            $("#sendMessageBtn").click();
+    userInput.addEventListener("keypress", function (e) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            sendMessageBtn.click();
             return false;
         }
     });
 });
+
 ```
 
 ***
