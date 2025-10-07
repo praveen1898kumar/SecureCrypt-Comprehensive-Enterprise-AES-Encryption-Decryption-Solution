@@ -319,36 +319,83 @@ Handles chat post requests, receives user question, calls embedding service, ret
 
 ```csharp
 using Microsoft.AspNetCore.Mvc;
+using UglyToad.PdfPig;
+using System.Text;
 
 [ApiController]
 [Route("api/[controller]")]
 public class ChatbotController : ControllerBase
 {
     private readonly EmbeddingService _embeddingService;
-    private static List<PdfTextChunk> _chunks = new();
+
+    // Use your actual PDF path here or from config
+    private const string PdfFilePath = @"C:\Users\Adhiraj\Downloads\BuddyAI Project\BuddyAI-Onboarding-Testing-Doc.pdf";
+
+    // Store chunks and embeddings in static cache to avoid recomputing each time
+    private static List<PdfTextChunk> _chunks = null;
 
     public ChatbotController(EmbeddingService embeddingService)
     {
         _embeddingService = embeddingService;
-        // On first run load and embed PDF text chunks (you can move this to initialization)
-        if (!_chunks.Any())
+
+        if (_chunks == null)
         {
-            // Load your PDF, split into chunks, embed and store here
-            // Dummy example:
-            var dummyText = "Sample onboarding text chunk 1... Sample chunk 2...";
-            var dummyEmbedding = _embeddingService.GetEmbeddingAsync(dummyText).Result;
-            _chunks.Add(new PdfTextChunk(dummyText, dummyEmbedding));
+            _chunks = LoadAndEmbedPdfChunks(PdfFilePath).Result;
         }
+    }
+
+    // Extracts text chunks from PDF and generates embeddings
+    private async Task<List<PdfTextChunk>> LoadAndEmbedPdfChunks(string pdfPath, int chunkSize = 1000)
+    {
+        var chunks = new List<string>();
+        var fullTextBuilder = new StringBuilder();
+
+        // Extract full text from PDF
+        using (PdfDocument document = PdfDocument.Open(pdfPath))
+        {
+            foreach (var page in document.GetPages())
+            {
+                fullTextBuilder.AppendLine(page.Text);
+            }
+        }
+
+        string fullText = fullTextBuilder.ToString();
+
+        // Split full text into chunks
+        for (int i = 0; i < fullText.Length; i += chunkSize)
+        {
+            int length = Math.Min(chunkSize, fullText.Length - i);
+            var chunk = fullText.Substring(i, length).Trim();
+            if (!string.IsNullOrEmpty(chunk))
+            {
+                chunks.Add(chunk);
+            }
+        }
+
+        var pdfTextChunks = new List<PdfTextChunk>();
+
+        // Generate embeddings for each chunk
+        foreach (var chunkText in chunks)
+        {
+            var embedding = await _embeddingService.GetEmbeddingAsync(chunkText);
+            pdfTextChunks.Add(new PdfTextChunk(chunkText, embedding));
+        }
+
+        return pdfTextChunks;
     }
 
     [HttpPost("ask")]
     public async Task<IActionResult> AskAsync([FromBody] ChatMessage chatMessage)
     {
         if (string.IsNullOrWhiteSpace(chatMessage.Content))
-            return BadRequest("Message is empty.");
+        {
+            return BadRequest("Message content cannot be empty.");
+        }
 
-        var relevantChunks = _embeddingService.FindSimilarChunks(chatMessage.Content, _chunks);
-        var contextText = string.Join("\n", relevantChunks.Select(c => c.Text));
+        // Find most relevant chunks based on query embedding similarity
+        var relevantChunks = await _embeddingService.FindSimilarChunksAsync(chatMessage.Content, _chunks);
+
+        var contextText = string.Join("\n\n", relevantChunks.Select(c => c.Text));
 
         var prompt = $"You are BuddyAI, an onboarding assistant helping new project members. " +
                      $"Answer ONLY based on the following information:\n\n{contextText}\n\nQuestion: {chatMessage.Content}\n\n" +
@@ -359,6 +406,7 @@ public class ChatbotController : ControllerBase
         return Ok(new ChatMessage { Role = "assistant", Content = answer });
     }
 }
+
 ```
 
 ***
